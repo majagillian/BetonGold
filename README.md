@@ -34,8 +34,6 @@ Android-APK lokal bauen (benötigt Android SDK und Java 21):
 
 ```bash
 npm run build
-npx cap add android
-./scripts/android-setup.sh
 npx cap sync android
 cd android && ./gradlew assembleDebug
 ```

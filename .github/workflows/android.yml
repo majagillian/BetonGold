@@ -30,11 +30,8 @@ jobs:
       - name: Web-App bauen
         run: npm run build
 
-      - name: Android-Projekt erzeugen
-        run: |
-          npx cap add android
-          ./scripts/android-setup.sh
-          npx cap sync android
+      - name: Web-App in Android-Projekt kopieren
+        run: npx cap sync android
 
       - name: APK bauen
         working-directory: android
