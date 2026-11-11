@@ -1,0 +1,66 @@
+name: Android-App bauen
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Abhängigkeiten installieren
+        run: npm ci
+
+      - name: Web-App bauen
+        run: npm run build
+
+      - name: Android-Projekt erzeugen
+        run: |
+          npx cap add android
+          ./scripts/android-setup.sh
+          npx cap sync android
+
+      - name: APK bauen
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: APK umbenennen
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk Betongold.apk
+
+      - name: APK als Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: Betongold-APK
+          path: Betongold.apk
+
+      - name: Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.${{ github.run_number }}
+          name: Betongold 0.1.${{ github.run_number }}
+          body: |
+            Installierbare Android-App (APK) von Betongold.
+
+            **Installation:** `Betongold.apk` auf dem Android-Handy herunterladen, öffnen und die Installation aus unbekannten Quellen erlauben.
+          files: Betongold.apk
+          make_latest: true

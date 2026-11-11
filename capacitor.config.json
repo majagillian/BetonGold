@@ -1,0 +1,6 @@
+{
+  "appId": "de.betongold.game",
+  "appName": "Betongold",
+  "webDir": "dist",
+  "android": { "backgroundColor": "#2b2140" }
+}
