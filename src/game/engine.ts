@@ -9,8 +9,12 @@ import {
 } from './econ';
 import { EVENTS, eventById, expireEvent, resolveEvent, sellNow, type EventCtx } from './events';
 import { levelDef } from './levels';
+import {
+  applyPlan, blockingDefects, defectDef, ensureInterior, furnDef, generateRooms, planCost, ROOM_NAMES,
+} from './interior';
+import { addXp, checkAchievements, GOLD_COST, initGamify, monthTick, rankDiscount, rankInfo, track } from './gamify';
 import type {
-  ActiveEvent, AvatarConfig, BuildTypeId, Feature, GameState, LoanType, MonthReport, Offer, Property, RegionId, Stats, Tier, Unit,
+  ActiveEvent, AvatarConfig, BuildTypeId, Feature, FurnStyle, GameState, LoanType, MonthReport, Offer, Property, RegionId, RenoPlan, Stats, Tier, Unit,
 } from './types';
 
 export const SAVE_KEY = 'betongold-save-v1';
@@ -59,6 +63,7 @@ export function newGame(name: string, avatar: AvatarConfig): GameState {
     idCounter: 0,
     flags: { levelMonth: 0 },
   };
+  initGamify(s);
   generateOffers(s, true);
   addMessage(s, 'hilde', 'Willkommen, Lottokönig!', `${name}, eine Million! Pass gut darauf auf. ${LEVEL_STORY[1]}`, 'good');
   addMessage(
@@ -66,6 +71,12 @@ export function newGame(name: string, avatar: AvatarConfig): GameState {
     'krause',
     'Ihre Bank stellt sich vor',
     'Guten Tag, Krause mein Name. Ihr Konto hat einen Dispokredit. Achten Sie darauf, nie darüber zu rutschen – sonst kommen Mahnungen. Und wer gar nicht zahlt, verliert alles, was er im aktuellen Level aufgebaut hat.',
+  );
+  addMessage(
+    s,
+    'viktor',
+    'Ein Gruß von Viktor von Hohenstein',
+    'Ich habe gehört, ein Lottogewinner will Immobilien kaufen. Wie niedlich. Die besten Objekte – die mit der Flamme – gehören mir. Wenn Sie mitbieten wollen: nur zu.',
   );
   takeSnapshot(s);
   return s;
@@ -85,6 +96,7 @@ export function load(): GameState | null {
     if (!raw) return null;
     const s = JSON.parse(raw) as GameState;
     if (!s.flags) s.flags = {};
+    migrate(s);
     return s;
   } catch {
     return null;
@@ -96,6 +108,12 @@ export function clearSave() {
   } catch {
     /* egal */
   }
+}
+
+export function migrate(s: GameState) {
+  initGamify(s);
+  for (const p of s.properties) ensureInterior(p);
+  for (const o of s.offers) ensureInterior(o.property);
 }
 
 function takeSnapshot(s: GameState) {
@@ -130,7 +148,8 @@ function makeProperty(s: GameState, region: RegionId, opts: { auction?: boolean;
     purchasePrice: 0, invested: 0, units: makeUnits(size, t.units), saleFactor: 1, hiddenDefect: 0, defectKnown: false,
     fromAuction: !!opts.auction, built: false, acquiredMonth: s.month,
   };
-  if (chance(opts.auction ? 0.5 : 0.35)) p.hiddenDefect = round(propertyValue(s, p) * rand(0.04, 0.12));
+  p.seed = randInt(1, 999999);
+  ensureInterior(p);
   void r;
   return p;
 }
@@ -145,7 +164,8 @@ export function generateOffers(s: GameState, fresh = false) {
       const want = r.id === 'kleeweiler' && s.level === 1 ? 4 : 3;
       for (let i = have; i < want; i++) {
         const p = makeProperty(s, r.id);
-        offers.push({ id: uid(s, 'o'), kind: 'kauf', property: p, price: round(propertyValue(s, p) * rand(0.78, 1.0), 500), inspected: false });
+        const hot = chance(s.level === 1 && s.month < 2 ? 0.15 : 0.22);
+        offers.push({ id: uid(s, 'o'), kind: 'kauf', property: p, price: round(propertyValue(s, p) * (hot ? rand(0.68, 0.84) : rand(0.8, 1.0)), 500), inspected: false, hot });
       }
     }
     if (s.level >= 5 && (r.id === 'neuwerk' || chance(0.6))) {
@@ -169,6 +189,61 @@ export function generateOffers(s: GameState, fresh = false) {
 
 export const inspectionCost = (o: Offer) => round(300 * Math.sqrt(regionById(o.property.region).pricePerSqm / 1100), 50);
 
+/** Besichtigungstermin (einmalige Gebühr), danach Rundgang frei */
+export function startTour(s: GameState, offerId: string): string {
+  const o = s.offers.find((x) => x.id === offerId);
+  if (!o || o.toured) return '';
+  const free = rankInfo(s.xp ?? 0).rank >= 10;
+  if (!free) s.cash -= inspectionCost(o);
+  o.toured = true;
+  track(s, 'tour');
+  addXp(s, 10);
+  return free ? 'Besichtigung kostenlos (Rang-Vorteil). Viel Spaß beim Umsehen!' : `Besichtigungstermin vereinbart (${fmt(inspectionCost(o))}).`;
+}
+
+function findProperty(s: GameState, id: string): Property | undefined {
+  return s.properties.find((p) => p.id === id) ?? s.offers.find((o) => o.id === id || o.property.id === id)?.property;
+}
+
+export function findDefect(s: GameState, propertyId: string, defectId: string): string {
+  const p = findProperty(s, propertyId);
+  const d = p?.defects?.find((x) => x.id === defectId);
+  if (!p || !d || d.found || d.fixed) return '';
+  d.found = true;
+  track(s, 'defectFound');
+  addXp(s, 25);
+  return `Mangel entdeckt: ${defectDef(d.type).name} (ca. ${fmt(d.cost)})`;
+}
+
+export function gutachter(s: GameState, offerId: string, withGold: boolean): string {
+  const o = s.offers.find((x) => x.id === offerId);
+  if (!o) return '';
+  if (withGold) {
+    if ((s.gold ?? 0) < GOLD_COST.gutachter) return 'Nicht genug Gold.';
+    s.gold = (s.gold ?? 0) - GOLD_COST.gutachter;
+  } else s.cash -= inspectionCost(o) * 4;
+  let n = 0;
+  for (const d of o.property.defects ?? []) if (!d.found) {
+    d.found = true;
+    n++;
+  }
+  o.inspected = true;
+  if (n) track(s, 'defectFound', n);
+  return n ? `Der Gutachter hat ${n} weitere${n > 1 ? '' : 'n'} Mangel gefunden.` : 'Der Gutachter findet nichts Neues.';
+}
+
+export function negotiate(s: GameState, offerId: string): string {
+  const o = s.offers.find((x) => x.id === offerId);
+  if (!o || o.negotiated) return '';
+  const found = (o.property.defects ?? []).filter((d) => d.found && !d.fixed).reduce((a, d) => a + d.cost, 0);
+  if (!found) return 'Ohne gefundene Mängel lässt der Verkäufer nicht mit sich reden.';
+  const cut = round(found * rand(0.7, 1.0), 500);
+  o.price = Math.max(1000, o.price - cut);
+  o.negotiated = true;
+  addXp(s, 20);
+  return `Verhandlung erfolgreich: Der Preis sinkt um ${fmt(cut)}!`;
+}
+
 export function inspectOffer(s: GameState, offerId: string): string {
   const o = s.offers.find((x) => x.id === offerId);
   if (!o || o.inspected) return '';
@@ -186,9 +261,10 @@ export function inspectOffer(s: GameState, offerId: string): string {
 
 export const purchaseTotal = (price: number) => round(price * 1.08, 10);
 
-export function buyOffer(s: GameState, offerId: string, withMortgage = false): string {
+export function buyOffer(s: GameState, offerId: string, withMortgage = false, priceOverride?: number): string {
   const o = s.offers.find((x) => x.id === offerId);
   if (!o) return '';
+  if (priceOverride) o.price = priceOverride;
   const total = purchaseTotal(o.price);
   let loanAmount = 0;
   if (withMortgage) {
@@ -204,6 +280,8 @@ export function buyOffer(s: GameState, offerId: string, withMortgage = false): s
   s.properties.push(p);
   s.offers = s.offers.filter((x) => x.id !== offerId);
   if (loanAmount) takeLoan(s, 'hypothek', loanAmount, p.id, true);
+  track(s, 'buy');
+  addXp(s, 40);
   return `Glückwunsch! „${p.name}“ gehört jetzt dir (inkl. 8 % Nebenkosten: ${fmt(total)}).`;
 }
 
@@ -228,6 +306,9 @@ export function bidAuction(s: GameState, offerId: string, pctOfValue: number): {
   p.fromAuction = true;
   s.cash -= total;
   s.properties.push(p);
+  track(s, 'buy');
+  track(s, 'auctionWon');
+  addXp(s, 60);
   return { ok: true, text: `Zuschlag! „${p.name}“ gehört dir für ${fmt(bid)}. Jetzt sanieren!` };
 }
 
@@ -260,7 +341,7 @@ export function startRenovation(s: GameState, pid: string, target: Partial<Recor
 // ---------- Verkaufen ----------
 export const stagingCost = (s: GameState, p: Property) => round(propertyValue(s, p) * 0.015, 100);
 
-export function listForSale(s: GameState, pid: string, factor: number, staging: boolean): string {
+export function listForSale(s: GameState, pid: string, factor: number, staging: boolean | FurnStyle): string {
   const p = s.properties.find((x) => x.id === pid);
   if (!p || (p.status !== 'idle' && p.status !== 'plot')) return '';
   if (staging && !p.staging && p.status === 'idle') {
@@ -268,6 +349,7 @@ export function listForSale(s: GameState, pid: string, factor: number, staging: 
     s.cash -= c;
     p.invested += c;
     p.staging = true;
+    p.stagingStyle = typeof staging === 'string' ? staging : 'skandi';
   }
   p.saleFactor = factor;
   (p as Property & { prevStatus?: string }).prevStatus = p.status;
@@ -294,6 +376,8 @@ export function listUnit(s: GameState, pid: string, ui: number, rentLevel: Unit[
   const p = s.properties.find((x) => x.id === pid);
   const u = p?.units[ui];
   if (!p || !u || u.tenant) return '';
+  const block = blockingDefects(p).filter((d) => d.found);
+  if (block.length) return `Erst den Mangel beheben: ${defectDef(block[0].type).name}. So darfst du nicht vermieten.`;
   s.cash -= 49;
   u.listed = true;
   u.rentLevel = rentLevel;
@@ -311,6 +395,8 @@ export function acceptApplicant(s: GameState, pid: string, ui: number, ai: numbe
   u.listed = false;
   u.applicants = [];
   u.vacantMonths = 0;
+  track(s, 'rent');
+  addXp(s, 30);
   return `${a.name} unterschreibt den Mietvertrag und zieht ein. Miete: ${fmt(tenantRent(s, p, u))} pro Monat.`;
 }
 
@@ -406,6 +492,8 @@ export function repayLoan(s: GameState, loanId: string, amount: number): string 
   if (l.principal < 1) {
     s.loans = s.loans.filter((x) => x.id !== loanId);
     s.score = clamp(s.score + 3, 0, 100);
+    track(s, 'loanRepaid');
+    addXp(s, 50);
     return `${l.label} vollständig getilgt! Herr Krause nickt anerkennend.`;
   }
   const r = l.rate / 12;
@@ -451,8 +539,9 @@ function randomEvents(s: GameState) {
     if (spawned >= 2) break;
     if (busyIds.has(p.id) || p.status === 'plot' || p.status === 'forSale') continue;
     // versteckter Mangel kommt ans Licht
-    if (p.hiddenDefect > 0 && !p.defectKnown && p.status === 'idle' && s.month - p.acquiredMonth >= 1 && chance(0.4)) {
-      spawnEvent(s, 'mangel', p.id, undefined, { cost: p.hiddenDefect });
+    const hidden = (p.defects ?? []).find((d) => !d.found && !d.fixed);
+    if (hidden && p.status === 'idle' && s.month - p.acquiredMonth >= 1 && chance(0.3)) {
+      spawnEvent(s, 'mangel', p.id, undefined, { cost: hidden.cost, defect: (p.defects ?? []).indexOf(hidden) });
       spawned++;
       continue;
     }
@@ -502,7 +591,12 @@ function randomEvents(s: GameState) {
 }
 
 export function chooseEventOption(s: GameState, evUid: string, index: number) {
-  return resolveEvent(s, evUid, index);
+  const r = resolveEvent(s, evUid, index);
+  if (r) {
+    track(s, 'eventSolved');
+    addXp(s, 15);
+  }
+  return r;
 }
 
 // ---------- Monatsabschluss ----------
@@ -530,27 +624,7 @@ export function advanceMonth(s: GameState): MonthReport {
     if (p.status !== 'renovating' && p.status !== 'building') continue;
     p.busyMonths -= 1;
     if (p.busyMonths > 0) continue;
-    const wasBuild = p.status === 'building';
-    for (const f of FEATURES) {
-      const t = p.pendingTiers?.[f.id];
-      if (t !== undefined && t > p.tiers[f.id]) p.tiers[f.id] = t;
-    }
-    p.pendingTiers = undefined;
-    p.status = 'idle';
-    if (wasBuild) {
-      p.built = true;
-      p.acquiredMonth = s.month;
-      line(`🏗️ ${p.name} ist fertig gebaut!`);
-      addMessage(s, 'bruno', 'Richtfest war gestern – heute Einzug!', `${p.name} ist fertig. Jetzt Mieter finden!`, 'good');
-    } else {
-      line(`🔨 Renovierung von ${p.name} abgeschlossen.`);
-      addMessage(s, 'bruno', 'Fertig, Chef!', `Die Renovierung von „${p.name}“ ist abgeschlossen. Schau dir das Ergebnis an!`, 'good');
-      if (p.fromAuction && FEATURES.every((f) => p.tiers[f.id] >= 2)) {
-        p.fromAuction = false;
-        s.stats.auctionRenovated++;
-        s.levelStats.auctionRenovated++;
-      }
-    }
+    completeWork(s, p, line);
   }
 
   // 3. Mieter
@@ -588,7 +662,15 @@ export function advanceMonth(s: GameState): MonthReport {
       }
       if (t.minderungMonths > 0) t.minderungMonths--;
       // Zufriedenheit pendelt sich ein
-      const target = 55 + rawQuality(p) * 30 + (t.rentFactor < 1 ? 10 : t.rentFactor > 1.05 ? -10 : 0);
+      const openKnown = (p.defects ?? []).filter((d) => d.found && !d.fixed).length;
+      if (openKnown) {
+        t.satisfaction -= 3 * openKnown;
+        if (t.minderungMonths <= 0 && chance(0.3)) {
+          t.minderung = 0.15;
+          t.minderungMonths = 2;
+        }
+      }
+      const target = 55 + rawQuality(p) * 30 + (t.rentFactor < 1 ? 10 : t.rentFactor > 1.05 ? -10 : 0) + (u.furnished ? 5 : 0);
       t.satisfaction = clamp(t.satisfaction + Math.sign(target - t.satisfaction) * 2, 0, 100);
       // Auszug
       if (t.noticeMonths > 0) {
@@ -596,11 +678,16 @@ export function advanceMonth(s: GameState): MonthReport {
         if (t.noticeMonths === 0) {
           u.tenant = null;
           u.vacantMonths = 0;
+          if (u.furnished && chance(0.25)) {
+            const dmg = round(furnishCost(u, u.furnished) * 0.2, 100);
+            s.cash -= dmg;
+            line(`🛋️ Abnutzung der Möbel in ${p.name}: ${fmt(dmg)} für Ersatz.`);
+          }
           line(`📦 ${t.name} ist aus ${p.name} ausgezogen.`);
           addMessage(s, 'mieter', 'Mieterwechsel', `${t.name} ist aus „${p.name}“ ausgezogen. Schalte ein Inserat und organisiere Besichtigungen!`);
         }
       } else if (s.level >= 2 && !t.stopsPaying) {
-        const leave = 0.012 + (t.satisfaction < 40 ? 0.06 : 0) + (t.rentFactor > 1.05 ? 0.01 : 0);
+        const leave = 0.012 + (t.satisfaction < 40 ? 0.06 : 0) + (t.rentFactor > 1.05 ? 0.01 : 0) + (u.furnished ? 0.025 : 0);
         if (chance(leave)) {
           t.noticeMonths = 2;
           addMessage(s, 'mieter', 'Kündigung erhalten', `${t.name} kündigt die Wohnung in „${p.name}“ und zieht in zwei Monaten aus.`);
@@ -646,6 +733,12 @@ export function advanceMonth(s: GameState): MonthReport {
     if (p.hiddenDefect > 0 && !p.defectKnown) {
       price -= p.hiddenDefect;
       defectNote = ` Der Gutachter des Käufers fand einen Mangel (−${fmt(p.hiddenDefect)}).`;
+    }
+    const unseen = (p.defects ?? []).filter((d) => !d.found && !d.fixed);
+    if (unseen.length) {
+      const cut = unseen.reduce((a, d) => a + d.cost * 1.3, 0);
+      price -= cut;
+      defectNote += ` Der Käufer entdeckte ${unseen.map((d) => defectDef(d.type).name).join(', ')} (−${fmt(cut)}).`;
     }
     const fee = price * 0.03;
     price = round(price - fee, 100);
@@ -723,16 +816,214 @@ export function advanceMonth(s: GameState): MonthReport {
     s.flags.viktorStreak = ok ? (s.flags.viktorStreak ?? 0) + 1 : 0;
   }
 
-  // 10. Neue Angebote und Ereignisse
+  // 10. Viktor schnappt sich liegengebliebene Top-Objekte
+  for (const o of [...s.offers]) {
+    if (!o.hot || !chance(0.5)) continue;
+    s.offers = s.offers.filter((x) => x.id !== o.id);
+    s.rival = { ...(s.rival ?? { wealth: 0, won: 0, lost: 0, snatched: 0 }), snatched: (s.rival?.snatched ?? 0) + 1, wealth: (s.rival?.wealth ?? 0) + o.price * 0.3 };
+    line(`🎩 Viktor hat sich „${o.property.name}“ in ${regionById(o.property.region).name} geschnappt.`);
+  }
+  // Erledigte, aber nicht abgeholte Aufgaben automatisch gutschreiben
+  for (const q of s.quests ?? [])
+    if (!q.claimed && q.progress >= q.target) {
+      q.claimed = true;
+      s.cash += q.reward.cash;
+      s.gold = (s.gold ?? 0) + q.reward.gold;
+      addXp(s, q.reward.xp);
+      s.counters = { ...(s.counters ?? {}), questDone: (s.counters?.questDone ?? 0) + 1 };
+      line(`✅ Aufgabe „${q.title}“ erledigt: +${fmt(q.reward.cash)}`);
+    }
+  // Neue Angebote und Ereignisse
   generateOffers(s);
   s.month += 1;
   randomEvents(s);
 
   // Bonität erholt sich langsam
   if (s.dunning === 0) s.score = clamp(s.score + (s.loans.length ? 1 : 0.5), 0, 100);
+  monthTick(s);
 
   checkLevel(s);
   return finishReport(s, rep, cash0);
+}
+
+export function completeWork(s: GameState, p: Property, line: (t: string) => void = () => undefined) {
+  const wasBuild = p.status === 'building';
+  const tiersChanged = !!p.pendingTiers;
+  for (const f of FEATURES) {
+    const t = p.pendingTiers?.[f.id];
+    if (t !== undefined && t > p.tiers[f.id]) p.tiers[f.id] = t;
+  }
+  p.pendingTiers = undefined;
+  p.status = 'idle';
+  p.busyMonths = 0;
+  if (wasBuild) {
+    p.built = true;
+    p.acquiredMonth = s.month;
+    p.rooms = generateRooms(p, p.tiers);
+    p.defects = p.defects ?? [];
+    p.extras = p.extras ?? [];
+    track(s, 'build');
+    addXp(s, 150);
+    line(`🏗️ ${p.name} ist fertig gebaut!`);
+    addMessage(s, 'bruno', 'Richtfest war gestern – heute Einzug!', `${p.name} ist fertig. Jetzt Mieter finden!`, 'good');
+  } else {
+    if (p.pendingPlan) {
+      const plan = p.pendingPlan;
+      const styled = Object.values(plan.rooms).filter((r) => r.floor || r.wall || r.kitchen || r.bath).length;
+      applyPlan(p, plan);
+      p.pendingPlan = undefined;
+      if (styled) track(s, 'roomStyled', styled);
+      if (plan.layout.length) track(s, 'layout', plan.layout.length);
+      if (plan.fix.length) track(s, 'defectFixed', plan.fix.length);
+      addXp(s, 40 + styled * 10 + plan.layout.length * 30 + plan.fix.length * 30);
+    } else if (tiersChanged) {
+      const keep = p.rooms;
+      p.rooms = generateRooms(p, p.tiers);
+      if (keep) p.rooms.forEach((r, i) => keep[i] && (r.id = keep[i].id));
+      addXp(s, 40);
+    }
+    line(`🔨 Renovierung von ${p.name} abgeschlossen.`);
+    addMessage(s, 'bruno', 'Fertig, Chef!', `Die Renovierung von „${p.name}“ ist abgeschlossen. Schau dir das Ergebnis an!`, 'good');
+    if (p.fromAuction && FEATURES.every((f) => p.tiers[f.id] >= 2) && !blockingDefects(p).length) {
+      p.fromAuction = false;
+      s.stats.auctionRenovated++;
+      s.levelStats.auctionRenovated++;
+    }
+  }
+  checkAchievements(s);
+}
+
+// ---------- Renovierungsplan ----------
+export function planTotal(s: GameState, p: Property, plan: RenoPlan) {
+  return planCost(p, plan, renovationCostFactor(p.region) * (1 - rankDiscount(s)));
+}
+
+export function startRenovationPlan(s: GameState, pid: string, plan: RenoPlan): string {
+  const p = s.properties.find((x) => x.id === pid);
+  if (!p || p.status !== 'idle') return '';
+  const { total, months, lines } = planTotal(s, p, plan);
+  if (!lines.length) return 'Wähle zuerst etwas aus.';
+  if (s.cash < total) return 'Dafür reicht dein Kontostand nicht.';
+  s.cash -= total;
+  p.invested += total;
+  p.status = 'renovating';
+  p.pendingPlan = plan;
+  p.busyMonths = Math.max(1, months);
+  p.units.forEach((u) => u.tenant && (u.tenant.satisfaction = clamp(u.tenant.satisfaction - 8, 0, 100)));
+  return `Bruno legt los: ${lines.length} Arbeiten für ${fmt(total)}. Fertig in ${p.busyMonths} Monat${p.busyMonths > 1 ? 'en' : ''}.`;
+}
+
+export function rushWork(s: GameState, pid: string): string {
+  const p = s.properties.find((x) => x.id === pid);
+  if (!p || (p.status !== 'renovating' && p.status !== 'building')) return '';
+  const cost = GOLD_COST.eile * p.busyMonths;
+  if ((s.gold ?? 0) < cost) return 'Nicht genug Gold.';
+  s.gold = (s.gold ?? 0) - cost;
+  completeWork(s, p);
+  checkLevel(s);
+  return 'Bruno hat Überstunden geschoben – alles fertig!';
+}
+
+export function rerollOffers(s: GameState): string {
+  if ((s.gold ?? 0) < GOLD_COST.reroll) return 'Nicht genug Gold.';
+  s.gold = (s.gold ?? 0) - GOLD_COST.reroll;
+  generateOffers(s, true);
+  return 'Jenny hat neue Angebote für dich!';
+}
+
+// ---------- Möblierung ----------
+export const furnishCost = (u: Unit, style: FurnStyle) => round(u.size * furnDef(style).costPerSqm, 100);
+
+export function setFurnishing(s: GameState, pid: string, ui: number, style: FurnStyle | null): string {
+  const p = s.properties.find((x) => x.id === pid);
+  const u = p?.units[ui];
+  if (!p || !u) return '';
+  if (u.tenant) return 'Das geht nur, solange die Wohnung leer steht.';
+  if (style === (u.furnished ?? null)) return '';
+  if (style) {
+    const c = furnishCost(u, style);
+    if (s.cash < c) return 'Dafür reicht dein Kontostand nicht.';
+    s.cash -= c;
+    p.invested += c;
+    track(s, 'furnish');
+    addXp(s, 25);
+  }
+  u.furnished = style;
+  u.applicants = [];
+  return style ? `Möbliert im Stil „${furnDef(style).name}“. Die Miete steigt um ${Math.round(furnDef(style).rentBonus * 100)} %.` : 'Die Möbel sind raus – die Wohnung wird unmöbliert vermietet.';
+}
+
+// ---------- Bieterduell gegen Viktor ----------
+export function startDuel(s: GameState, offerId: string, mortgage = false): string {
+  const o = s.offers.find((x) => x.id === offerId);
+  if (!o || !o.hot) return '';
+  const value = propertyValue(s, o.property);
+  const aggression = 1 + Math.min(0.12, (s.rival?.lost ?? 0) * 0.015) + s.level * 0.006;
+  const rivalMax = round(value * rand(0.9, 1.08) * aggression, 500);
+  const first = round(o.price * rand(1.02, 1.07), 500);
+  s.duel = {
+    offerId,
+    playerBid: o.price,
+    rivalBid: first,
+    rivalMax: Math.max(rivalMax, first),
+    round: 1,
+    log: [{ who: 'viktor', amount: first, text: pick(['Dieses Haus gehört mir.', 'Ich biete mehr, Lottokind.', 'Sie wollen spielen? Bitte sehr.']) }],
+    status: 'running',
+    spied: false,
+  };
+  s.flags.duelMortgage = mortgage ? 1 : 0;
+  return '';
+}
+
+export function duelBid(s: GameState, raisePct: number): string {
+  const d = s.duel;
+  if (!d || d.status !== 'running') return '';
+  const o = s.offers.find((x) => x.id === d.offerId);
+  if (!o) return '';
+  const bid = round(d.rivalBid * (1 + raisePct), 500);
+  const loan = s.flags.duelMortgage ? round(bid * 0.7, 1000) : 0;
+  if (s.cash + loan < purchaseTotal(bid)) return 'So viel Geld hast du nicht.';
+  d.playerBid = bid;
+  d.log.push({ who: 'du', amount: bid });
+  d.round++;
+  if (bid > d.rivalMax) {
+    d.status = 'won';
+    d.log.push({ who: 'viktor', amount: 0, text: pick(['Pah! Behalten Sie die Bruchbude.', 'Das werden Sie bereuen …', 'Diesmal haben Sie Glück gehabt.']) });
+    s.rival = { ...(s.rival ?? { wealth: 0, won: 0, lost: 0, snatched: 0 }), won: (s.rival?.won ?? 0) + 1 };
+    const r = buyOffer(s, o.id, !!s.flags.duelMortgage, bid);
+    track(s, 'duelWon');
+    addXp(s, 80);
+    return `Zuschlag! Du hast Viktor überboten. ${r}`;
+  }
+  const step = rand(0.01, 0.04);
+  const counter = Math.min(d.rivalMax, round(bid * (1 + step), 500));
+  d.rivalBid = counter;
+  d.log.push({ who: 'viktor', amount: counter, text: counter >= d.rivalMax ? 'Mein letztes Wort.' : pick(['Mehr!', 'Lächerlich.', 'Ist das alles?', 'Ich habe Zeit.', undefined as unknown as string]) });
+  return '';
+}
+
+export function duelFold(s: GameState): string {
+  const d = s.duel;
+  if (!d || d.status !== 'running') return '';
+  d.status = 'lost';
+  s.rival = { ...(s.rival ?? { wealth: 0, won: 0, lost: 0, snatched: 0 }), lost: (s.rival?.lost ?? 0) + 1, wealth: (s.rival?.wealth ?? 0) + d.rivalBid * 0.3 };
+  const o = s.offers.find((x) => x.id === d.offerId);
+  s.offers = s.offers.filter((x) => x.id !== d.offerId);
+  track(s, 'duelLost');
+  return o ? `Viktor kauft „${o.property.name}“ für ${fmt(d.rivalBid)}. Er grinst.` : '';
+}
+
+export function duelSpy(s: GameState): string {
+  const d = s.duel;
+  if (!d || d.spied) return '';
+  if ((s.gold ?? 0) < GOLD_COST.spion) return 'Nicht genug Gold.';
+  s.gold = (s.gold ?? 0) - GOLD_COST.spion;
+  d.spied = true;
+  return `Dennis hat Viktors Assistentin ausgehorcht: Er geht höchstens bis ${fmt(d.rivalMax)}.`;
+}
+
+export function closeDuel(s: GameState) {
+  s.duel = null;
 }
 
 function finishReport(s: GameState, rep: MonthReport, cash0: number) {

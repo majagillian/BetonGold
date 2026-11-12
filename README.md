@@ -11,6 +11,14 @@ Jeder Push auf `main` baut automatisch eine neue APK und aktualisiert die Web-Ve
 
 ## Spielinhalt
 
+- **Realistische 3D-Grafik:** Häuser, Innenräume und die Weltkarte werden mit three.js in 3D berechnet (Licht, Schatten, Holz-, Fliesen-, Ziegel- und Putzmaterialien).
+- **Weltkarte:** Die Insel Aurelien in 3D – verschieben, zoomen, Regionen antippen. Gesperrte Regionen liegen im Nebel.
+- **Besichtigung Raum für Raum:** 3D-Rundgang durch jedes Objekt. Jedes Haus hat mindestens einen Mangel (Schimmel, Setzungsriss, alte Elektrik, Holzwurm …), den man im Raum entdecken kann. Gefundene Mängel drücken den Kaufpreis; der Hauptmangel muss vor dem Vermieten behoben werden.
+- **Renovierungsplaner:** Pro Raum Boden, Wandfarbe, Küchen- und Badmodell wählen – mit Live-Vorschau. Grundriss ändern: Wanddurchbruch zur offenen Wohnküche, Zimmer teilen, Gäste-WC, Balkon, Dachausbau. Regionaler Geschmack beeinflusst Wert und Miete.
+- **Möbliert oder unmöbliert vermieten:** Vier Einrichtungsstile mit höherer Miete, aber häufigerem Mieterwechsel.
+- **Gegenspieler Viktor:** Bei Top-Objekten kommt es zum Bieterduell – das höhere Gebot gewinnt. Liegengelassene Top-Objekte schnappt er sich.
+- **Gamification:** Erfahrungspunkte und Ränge mit Rabatten, 26 Erfolge, Monatsaufgaben, tägliches Glücksrad mit Serienbonus, Goldbarren (nur im Spiel verdienbar), Rangliste gegen andere Investoren, Sounds und Vibration.
+
 - **Charakter-Editor:** Name, Geschlecht (inkl. nicht-binär), Pronomen, 12 Hauttöne, Körperbau, Größe, Alter, Gesichtsform, Augen, Brauen, Mund, Lippenfarbe, Bart, Sommersprossen, Vitiligo, 17 Frisuren, 16 Haarfarben, Kopfbedeckungen (u. a. Hidschab, Turban, Kippa), 10 Oberteile, Hosen und Röcke, Schuhe, Brillen, Schmuck, Hörgerät, Rollstuhl, Gehstock und Beinprothese.
 - **7+1 Regionen** mit eigenen Immobilien, Preisen, Mieten, Nachfrage und Ereignissen: Kleeweiler, Mühlental, Lumenhafen, Pilzhain, Wolkenspitz, Sonnenküste, Kronstadt und Neuwerk.
 - **10 Level** mit eigenen Zielen; jedes Level schaltet neue Regionen und Funktionen frei.

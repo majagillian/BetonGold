@@ -4,15 +4,18 @@ import { NPC_AVATARS } from '../art/npcs';
 import { NPCS } from '../game/data';
 import type { NpcId } from '../game/types';
 import { fmt } from '../game/econ';
+import { Icon } from './icons';
 
 export function Sheet({ title, onClose, children, icon }: { title: string; onClose: () => void; children: ComponentChildren; icon?: string }) {
   return (
     <div class="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div class="sheet">
         <div class="sheet-head">
-          {icon && <span style={{ fontSize: '22px' }}>{icon}</span>}
+          {icon && <Icon name={icon} size={20} />}
           <h2>{title}</h2>
-          <button class="close" onClick={onClose} aria-label="Schließen">✕</button>
+          <button class="close" onClick={onClose} aria-label="Schließen">
+            <Icon name="close" size={18} />
+          </button>
         </div>
         <div class="sheet-body">{children}</div>
       </div>
@@ -67,7 +70,7 @@ export function Money({ v, sign }: { v: number; sign?: boolean }) {
 }
 
 export function Confetti() {
-  const colors = ['#e3a72f', '#ffd76a', '#3fbf74', '#4a8fdc', '#e86157', '#c86ab0'];
+  const colors = ['#b8913f', '#d9b56a', '#2f855a', '#1d3557', '#c0392b', '#f2efe8'];
   return (
     <div class="confetti">
       {Array.from({ length: 40 }, (_, i) => (
@@ -100,9 +103,21 @@ export function Toggle({ on, onChange, label, sub }: { on: boolean; onChange: (v
 export const stars = (q: number) => {
   const n = Math.max(1, Math.min(5, Math.round(q * 5)));
   return (
-    <span>
-      {'★'.repeat(n)}
-      <span style={{ opacity: 0.25 }}>{'★'.repeat(5 - n)}</span>
+    <span class="row" style={{ gap: '1px' }}>
+      {Array.from({ length: 5 }, (_, i) => (
+        <svg key={i} width={11} height={11} viewBox="0 0 24 24" fill={i < n ? '#b8913f' : '#ddd6c6'}>
+          <path d="m12 2 3 6.5 7 .9-5.2 4.8 1.4 7L12 17.8 5.8 21.2l1.4-7L2 9.4l7-.9L12 2Z" />
+        </svg>
+      ))}
     </span>
   );
 };
+
+export function Stat({ label, value, cls }: { label: string; value: ComponentChildren; cls?: string }) {
+  return (
+    <div class="stat-tile">
+      <div class="l">{label}</div>
+      <div class={`v ${cls ?? ''}`}>{value}</div>
+    </div>
+  );
+}

@@ -4,6 +4,8 @@ import type { AvatarConfig, GameState } from '../game/types';
 import { Creator } from './Creator';
 import { Game, WinModal } from './Game';
 import { Intro, Title } from './Intro';
+import { Icon } from './icons';
+import { setSoundEnabled, sfx } from './sound';
 
 type Screen = 'title' | 'intro' | 'creator' | 'game' | 'edit';
 
@@ -13,9 +15,14 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [showReport, setShowReport] = useState(false);
   const timer = useRef<number | undefined>(undefined);
+  const gameRef = useRef<GameState | null>(game);
+  gameRef.current = game;
+
+  useEffect(() => setSoundEnabled(game?.settings?.sound ?? true), [game?.settings?.sound]);
 
   const commit = (next: GameState) => {
     save(next);
+    gameRef.current = next;
     setGame(next);
   };
 
@@ -27,9 +34,11 @@ export function App() {
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
+  // Aktionen laufen synchron auf einer Kopie des aktuellen Stands
   const act = (fn: (s: GameState) => string | void) => {
-    if (!game) return;
-    const next = structuredClone(game);
+    const cur = gameRef.current;
+    if (!cur) return;
+    const next = structuredClone(cur);
     const r = fn(next);
     checkLevel(next);
     commit(next);
@@ -37,25 +46,29 @@ export function App() {
   };
 
   const nextMonth = () => {
-    if (!game) return;
-    const next = structuredClone(game);
+    const cur = gameRef.current;
+    if (!cur) return;
+    const next = structuredClone(cur);
     advanceMonth(next);
     commit(next);
     setShowReport(true);
+    if ((next.lastReport?.rent ?? 0) > 0) sfx.coin();
   };
 
-  const dismiss = (k: 'levelup' | 'demotion' | 'report' | 'win') => {
-    if (!game) return;
+  const dismiss = (k: 'levelup' | 'demotion' | 'report' | 'win' | 'reward') => {
+    const cur = gameRef.current;
+    if (!cur) return;
     if (k === 'report') {
       setShowReport(false);
       return;
     }
-    const next = structuredClone(game);
+    const next = structuredClone(cur);
     if (k === 'levelup') next.pendingLevelUp = null;
     if (k === 'demotion') next.pendingDemotion = null;
     if (k === 'win') next.flags.winShown = 1;
+    if (k === 'reward') next.pendingRewards = (next.pendingRewards ?? []).slice(1);
     commit(next);
-    setShowReport(false);
+    if (k !== 'reward') setShowReport(false);
   };
 
   const start = (name: string, avatar: AvatarConfig) => {
@@ -99,13 +112,16 @@ export function App() {
           onRestart={() => {
             clearSave();
             setGame(null);
+            gameRef.current = null;
             setScreen('intro');
           }}
           dismiss={dismiss}
           showReport={showReport}
+          toast={showToast}
           markRead={() => {
-            if (game.messages.some((m) => !m.read)) {
-              const next = structuredClone(game);
+            const cur = gameRef.current;
+            if (cur && cur.messages.some((m) => !m.read)) {
+              const next = structuredClone(cur);
               next.messages.forEach((m) => (m.read = true));
               commit(next);
             }
@@ -121,7 +137,7 @@ export function App() {
       {content}
       {toast && (
         <div class="toast" onClick={() => setToast(null)}>
-          <span style={{ fontSize: '22px' }}>💬</span>
+          <Icon name="info" />
           <span>{toast}</span>
         </div>
       )}

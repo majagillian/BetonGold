@@ -34,6 +34,45 @@ export type HouseStyle =
   | 'quartier'
   | 'grundstueck';
 
+export type RoomType = 'flur' | 'wohnen' | 'kueche' | 'wohnkueche' | 'bad' | 'wc' | 'schlafen' | 'kind' | 'arbeiten' | 'essen';
+export type FloorId = 'teppich_alt' | 'linoleum' | 'dielen_alt' | 'laminat' | 'vinyl_beton' | 'fliesen_hell' | 'fliesen_dunkel' | 'parkett_eiche' | 'fischgraet' | 'marmor';
+export type WallId = 'tapete_alt' | 'weiss' | 'grau' | 'salbei' | 'taupe' | 'nachtblau' | 'terrakotta' | 'altrosa' | 'ocker' | 'anthrazit';
+export type KitchenId = 'alt' | 'pantry' | 'landhaus' | 'modern' | 'industrial' | 'insel';
+export type BathId = 'alt' | 'basic' | 'modern' | 'spa';
+export type FurnStyle = 'skandi' | 'industrial' | 'landhaus' | 'luxus';
+export type DefectType = 'schimmel' | 'feuchte' | 'elektrik' | 'holzwurm' | 'riss' | 'dach' | 'asbest' | 'wasserschaden' | 'bleirohre';
+export type LayoutId = 'durchbruch' | 'teilen' | 'wc' | 'balkon' | 'dach' | 'ankleide';
+
+export interface Room {
+  id: string;
+  type: RoomType;
+  size: number;
+  floor: FloorId;
+  wall: WallId;
+  kitchen?: KitchenId;
+  bath?: BathId;
+}
+
+export interface Defect {
+  id: string;
+  type: DefectType;
+  roomId: string;
+  cost: number;
+  main: boolean;
+  found: boolean;
+  fixed: boolean;
+  spot: [number, number]; // Position auf der Wand (0..1)
+}
+
+export interface RenoPlan {
+  rooms: Record<string, { floor?: FloorId; wall?: WallId; kitchen?: KitchenId; bath?: BathId }>;
+  layout: { id: LayoutId; roomId?: string }[];
+  fix: string[];
+  elektrik?: Tier;
+  fassade?: Tier;
+  facadeColor?: string;
+}
+
 export type Feature = 'bad' | 'kueche' | 'boden' | 'elektrik' | 'fassade';
 export type Tier = 0 | 1 | 2 | 3; // marode, Basic, Standard, Premium
 
@@ -116,6 +155,7 @@ export interface Unit {
   applicants: Tenant[];
   vacantMonths: number;
   rentLevel: 0.9 | 1 | 1.15;
+  furnished?: FurnStyle | null;
 }
 
 export interface Property {
@@ -141,6 +181,13 @@ export interface Property {
   buildType?: BuildTypeId;
   buildCost?: number;
   acquiredMonth: number;
+  rooms?: Room[];
+  defects?: Defect[];
+  extras?: string[];
+  facadeColor?: string;
+  stagingStyle?: FurnStyle;
+  pendingPlan?: RenoPlan;
+  seed?: number;
 }
 
 export type BuildTypeId = 'efh' | 'mfh' | 'wohnanlage' | 'quartier';
@@ -151,6 +198,9 @@ export interface Offer {
   property: Property;
   price: number;
   inspected: boolean;
+  hot?: boolean;
+  toured?: boolean;
+  negotiated?: boolean;
 }
 
 export type LoanType = 'renovierung' | 'hypothek' | 'bau' | 'investor';
@@ -239,4 +289,46 @@ export interface GameState {
   pendingDemotion: number | null;
   idCounter: number;
   flags: Record<string, number>;
+  xp?: number;
+  gold?: number;
+  achievements?: string[];
+  quests?: Quest[];
+  questMonth?: number;
+  counters?: Record<string, number>;
+  daily?: { last: string; streak: number };
+  rival?: { wealth: number; won: number; lost: number; snatched: number };
+  duel?: Duel | null;
+  rivals?: { name: string; wealth: number; growth: number }[];
+  pendingRewards?: Reward[];
+  settings?: { sound: boolean };
+}
+
+export interface Quest {
+  id: string;
+  key: string;
+  title: string;
+  target: number;
+  progress: number;
+  reward: { cash: number; xp: number; gold: number };
+  claimed: boolean;
+}
+
+export interface Duel {
+  offerId: string;
+  playerBid: number;
+  rivalBid: number;
+  rivalMax: number;
+  round: number;
+  log: { who: 'du' | 'viktor'; amount: number; text?: string }[];
+  status: 'running' | 'won' | 'lost';
+  spied?: boolean;
+}
+
+export interface Reward {
+  title: string;
+  text: string;
+  cash?: number;
+  xp?: number;
+  gold?: number;
+  kind: 'achievement' | 'rank' | 'quest' | 'daily';
 }

@@ -2,6 +2,8 @@
 import type { ActiveEvent, Feature, GameState, NpcId, Property, RegionId, Tenant, Tier, Unit } from './types';
 import { addMessage, chance, clamp, fmt, pick, propertyValue, round, tenantRent, unlockedRegions } from './econ';
 import { regionById } from './data';
+import { addXp, track } from './gamify';
+import { defectDef } from './interior';
 
 export interface EventCtx {
   s: GameState;
@@ -650,12 +652,26 @@ export const EVENTS: EventDef[] = [
     weight: 0,
     scope: 'triggered',
     deadline: 1,
-    text: (c) => `Bruno: „Chef, in ${c.p!.name} ist der Dachstuhl morsch und die Leitungen sind von 1950. Das hat dir beim Kauf keiner gesagt.“ Kosten: ${fmt(c.ev.data.cost)}.`,
-    options: (c) => [
-      { label: 'Richtig reparieren', cost: c.ev.data.cost, run: (x) => { x.p!.hiddenDefect = 0; x.p!.defectKnown = false; return 'Repariert. Beim nächsten Kauf lieber vorher besichtigen!'; } },
-      { label: 'Notlösung', detail: 'Billiger, Mangel bleibt teilweise', cost: round(c.ev.data.cost * 0.4), run: (x) => { x.p!.hiddenDefect = round(c.ev.data.cost * 0.5); x.p!.defectKnown = true; return 'Notdürftig geflickt. Käufer werden das merken.'; } },
-    ],
-    expire: (c) => { c.s.cash -= round(c.ev.data.cost * 1.3); c.p!.hiddenDefect = 0; c.p!.defectKnown = false; return `Der Schaden hat sich ausgeweitet: ${fmt(c.ev.data.cost * 1.3)}.`; },
+    text: (c) => {
+      const d = c.p?.defects?.[c.ev.data.defect ?? -1];
+      return d
+        ? `Bruno: „Chef, schlechte Nachrichten aus ${c.p!.name}: ${defectDef(d.type).name}. ${defectDef(d.type).desc}“ Kosten: ${fmt(d.cost)}.`
+        : `Bruno: „Chef, in ${c.p!.name} ist etwas faul.“ Kosten: ${fmt(c.ev.data.cost)}.`;
+    },
+    options: (c) => {
+      const d = c.p?.defects?.[c.ev.data.defect ?? -1];
+      return [
+        { label: 'Sofort beheben', cost: c.ev.data.cost, run: (x) => { if (d) { d.found = true; d.fixed = true; track(x.s, 'defectFixed'); } return 'Repariert. Beim nächsten Kauf lieber genauer besichtigen!'; } },
+        { label: 'Später im Renovierungsplan', detail: 'Bis dahin: weniger Wert, unzufriedene Mieter', cost: 0, run: () => { if (d) d.found = true; return 'Notiert. Plane die Beseitigung bei der nächsten Renovierung ein.'; } },
+      ];
+    },
+    expire: (c) => {
+      const d = c.p?.defects?.[c.ev.data.defect ?? -1];
+      if (d) d.found = true;
+      const extra = round(c.ev.data.cost * 0.3);
+      c.s.cash -= extra;
+      return `Der Mangel hat Folgeschäden verursacht: ${fmt(extra)}.`;
+    },
   },
   {
     id: 'mahnung2',
@@ -747,6 +763,8 @@ export function sellNow(s: GameState, p: Property, price: number, how: string) {
   s.events = s.events.filter((e) => e.propertyId !== p.id);
   const profit = price - p.invested;
   if (profit > 0 && !p.built) {
+    track(s, 'flip');
+    addXp(s, Math.min(400, 60 + Math.round(profit / 2000)));
     s.stats.profitableFlips++;
     s.levelStats.profitableFlips++;
     s.stats.bestFlipProfit = Math.max(s.stats.bestFlipProfit, profit);

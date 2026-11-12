@@ -6,14 +6,15 @@ import {
 } from '../game/avatarOptions';
 import type { AvatarConfig } from '../game/types';
 import { Toggle } from './common';
+import { Icon } from './icons';
 
 type Tab = 'person' | 'gesicht' | 'haare' | 'kleidung' | 'extras';
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'person', label: '🧍 Person' },
-  { id: 'gesicht', label: '🙂 Gesicht' },
-  { id: 'haare', label: '💇 Haare' },
-  { id: 'kleidung', label: '👕 Kleidung' },
-  { id: 'extras', label: '✨ Extras' },
+  { id: 'person', label: 'Person' },
+  { id: 'gesicht', label: 'Gesicht' },
+  { id: 'haare', label: 'Haare' },
+  { id: 'kleidung', label: 'Kleidung' },
+  { id: 'extras', label: 'Extras' },
 ];
 
 const F = ({ label, children }: { label: string; children: ComponentChildren }) => (
@@ -64,8 +65,12 @@ export function Creator({ initial, initialName, onDone, onCancel }: { initial?: 
           <Avatar config={a} />
         </div>
         <div class="creator-actions">
-          <button onClick={() => setA(randomAvatar())} aria-label="Zufällige Figur">🎲</button>
-          <button onClick={() => setA(DEFAULT_AVATAR)} aria-label="Zurücksetzen">↺</button>
+          <button onClick={() => setA(randomAvatar())} aria-label="Zufällige Figur">
+            <Icon name="sparkle" />
+          </button>
+          <button onClick={() => setA(DEFAULT_AVATAR)} aria-label="Zurücksetzen">
+            <Icon name="back" />
+          </button>
         </div>
       </div>
       <div class="tabs">
@@ -161,7 +166,7 @@ export function Creator({ initial, initialName, onDone, onCancel }: { initial?: 
         {!valid && <p class="hint" style={{ margin: '0 0 8px', textAlign: 'center' }}>Gib deiner Figur einen Namen (mindestens 2 Zeichen) – Reiter „Person“.</p>}
         <div class="row">
           {onCancel && <button class="btn ghost" onClick={onCancel}>Abbrechen</button>}
-          <button class="btn block green big" disabled={!valid} onClick={() => onDone(name.trim(), a)}>
+          <button class="btn block gold big" disabled={!valid} onClick={() => onDone(name.trim(), a)}>
             {onCancel ? 'Speichern' : "Los geht's!"}
           </button>
         </div>

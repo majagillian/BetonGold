@@ -2,6 +2,7 @@
 import { FEATURES, JOBS, LAST_NAMES, FIRST_NAMES, POSITIVE_NOTES, REGIONS, TIER_VALUE, WARNING_NOTES, regionById } from './data';
 import { randomAvatar } from './avatarOptions';
 import type { GameState, Message, NpcId, Property, RegionId, Tenant, Unit } from './types';
+import { appeal, furnDef } from './interior';
 
 export const rand = (a: number, b: number) => a + Math.random() * (b - a);
 export const randInt = (a: number, b: number) => Math.floor(rand(a, b + 1));
@@ -61,8 +62,10 @@ export function propertyValue(s: GameState, p: Property) {
   if (p.status === 'building') return p.invested * 0.95;
   const r = regionById(p.region);
   let v = p.size * r.pricePerSqm * s.marketIndex[p.region] * valueFactor(quality(p));
+  if (p.rooms?.length) v *= 0.94 + 0.14 * appeal(p);
   if (p.staging) v *= 1.05;
   if (p.defectKnown) v -= p.hiddenDefect;
+  for (const d of p.defects ?? []) if (d.found && !d.fixed) v -= d.cost * 1.2;
   return Math.max(0, v);
 }
 
@@ -87,14 +90,17 @@ export function seasonFactor(region: RegionId, month: number) {
 
 export function marketRent(s: GameState, p: Property, u: Unit) {
   const r = regionById(p.region);
-  return u.size * r.rentPerSqm * (0.5 + 0.6 * quality(p)) * Math.sqrt(s.marketIndex[p.region]);
+  const a = p.rooms?.length ? 0.94 + 0.14 * appeal(p) : 1;
+  return u.size * r.rentPerSqm * (0.5 + 0.6 * quality(p)) * Math.sqrt(s.marketIndex[p.region]) * a;
 }
+
+export const furnishBonus = (u: Unit) => (u.furnished ? furnDef(u.furnished).rentBonus : 0);
 
 export function tenantRent(s: GameState, p: Property, u: Unit) {
   if (!u.tenant) return 0;
   let factor = u.tenant.rentFactor;
   if (p.region === 'kronstadt' && s.flags.mietpreisbremse) factor = Math.min(factor, 1);
-  let rent = marketRent(s, p, u) * factor * seasonFactor(p.region, s.month);
+  let rent = marketRent(s, p, u) * (1 + furnishBonus(u)) * factor * seasonFactor(p.region, s.month);
   if (u.tenant.minderungMonths > 0) rent *= 1 - u.tenant.minderung;
   if (p.region === 'pilzhain' && (s.flags.flaute ?? 0) > 0) rent *= 0.6;
   return rent;
